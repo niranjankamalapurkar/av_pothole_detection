@@ -1,6 +1,15 @@
 ## Scope
 
-SOTIF (ISO 21448) analysis is performed on the three items identified in `hara.md` Section 8 as performance-limitation concerns rather than ISO 26262 malfunctions: Ghost Pothole (#2), Single-Vehicle Sensor Miss (#4), and Localization Drift (#7). SOTIF items are not ASIL-classified — there is no malfunction to rate. Instead, each item gets a defined risk acceptance criterion and a verification & validation strategy, argued toward an acceptable residual risk rather than a pass/fail gate.
+SOTIF (ISO 21448) analysis is scoped against the items identified in `hara.md` Section 8 as performance-limitation concerns rather than ISO 26262 malfunctions: Ghost Pothole (#2), Single-Vehicle Sensor Miss (#4), and Localization Drift (#7).
+ 
+Of these, only **Ghost Pothole (#2)** requires a dedicated, feature-specific SOTIF work product — see `ghost_pothole_sotif.md`, built using the method below.
+ 
+**Single-Vehicle Sensor Miss (#4)** and **Localization Drift (#7)** are flagged for completeness but do not require dedicated analysis here:
+- #4 is bounded by the same freedom-from-interference argument `hara.md` establishes for item #5 — an erroneous CLEARED status does not elevate risk above baseline regardless of whether it originates from a software defect or a genuine sensor miss, since the real-time reactive path is independent of cloud/advisory status. It is further bounded by genuine three-sensor redundancy (camera, LiDAR, Jerk/IMU) on physical confirmation.
+- #7 is inherited from the existing Localization item's SOTIF case and is not new to this feature.
+Full rationale for both is documented in `hara.md` Section 8 and is not repeated here.
+ 
+SOTIF items are not ASIL-classified — there is no malfunction to rate. For the one item requiring dedicated analysis, this means a defined risk acceptance criterion and a verification & validation strategy, argued toward an acceptable residual risk rather than a pass/fail gate.
 
 ---
 

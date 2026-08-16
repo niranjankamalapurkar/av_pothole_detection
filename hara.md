@@ -123,11 +123,15 @@ Rationale: every hazard traced above either (a) is inherited into an already-cla
 
 ## 8. SOTIF Items (items #2, #4, #7) — not ASIL-classified here
 
-These require scenario-based validation and residual-risk acceptance criteria (ISO 21448), not an S/E/C/ASIL table:
-
+These are performance-limitation (non-malfunction) items. Only one requires a dedicated, feature-specific SOTIF validation effort; the other two are flagged for completeness but belong to existing baseline SOTIF cases, not to this feature.
+ 
+**Requires dedicated SOTIF validation for this feature:**
 - **#2 Ghost pothole:** requires a defined, testable discrimination-performance target (false-positive rate under specified visual conditions) and scenario coverage in validation. Vehicle-level effect is the same unintended-maneuver hazard as HARA #1, so the *effect* is already gated by the Path Planner's arbitration (SG-01) — but the SOTIF question is about acceptable *frequency* of triggering that gate under nominal (non-malfunctioning) operation, which is a separate acceptance case.
-- **#4 Single-vehicle sensor miss:** requires a defined detection-performance target (miss rate under specified conditions — lens flare, partial occlusion). This is a property of the baseline reactive perception stack's adequacy for pothole-class (static, low-contrast) obstacles generally — it is not specific to, or made worse by, the cloud CLEARED-status pathway (see #5 above: a wrong cloud status doesn't suppress the reactive path). It should be tracked as a SOTIF validation target for the perception system, not folded into this feature's safety case as if the feature created the risk.
+
+**Flagged, not feature-specific — no dedicated SOTIF work product needed here:**
+- **#4 Single-vehicle sensor miss:** on reflection, this does not need a dedicated feature-specific SOTIF validation target. Two reasons converge: (a) the same freedom-from-interference argument used for #5 applies identically here — regardless of whether an erroneous CLEARED status originates from a software defect (#5) or a genuine sensor miss (#4), the downstream vehicle-level consequence is identical and does not elevate risk above baseline, since the real-time reactive path is independent of cloud/advisory status (see #5 disposition above); (b) the specific failure being described — the system failing to register a pothole it physically drove over — requires camera, LiDAR, *and* the Jerk/IMU sensor to all miss it simultaneously. Jerk is not subject to the same visual-artifact triggering conditions as #2 (it only fires on physical contact), so a genuine three-way simultaneous miss is a materially smaller residual than any single sensor's miss rate — the main scenario that defeats all three at once is geometric (wheels straddling the pothole entirely), a different failure mode from a perception performance limitation. Whether the vehicle's baseline perception stack is adequate for negative-obstacle detection in general remains a real question, but it belongs to the vehicle's baseline perception SOTIF case, not to this feature, for the same reason as #7.
 - **#7 Localization drift:** inherited from the existing Localization item's SOTIF case; not new to this feature, flagged only so it isn't silently dropped.
+
 
 ---
 
@@ -145,4 +149,4 @@ These require scenario-based validation and residual-risk acceptance criteria (I
 - **Bandwidth allocation requirement** -> derive from existing E/E architecture budget (addresses #3).
 - **Real-time budget requirement** -> derive from existing Path Planner WCET allocation (addresses #6).
 - **Freedom-from-interference requirement (QM, architectural)** -> the cloud/advisory status path must never gate, disable, or override the real-time reactive detection path, under any condition including erroneous or absent cloud data (addresses #5; also bounds the residual risk from #4).
-- **SOTIF validation plan (separate work product, not this document)** -> define acceptance targets and scenario coverage for perception ghost-detection (#2), sensor miss-rate (#4), and localization drift (#7).
+- **SOTIF validation plan (separate work product, not this document)** -> define acceptance targets and scenario coverage for perception ghost-detection (#2) only. Sensor miss-rate (#4) and localization drift (#7) are flagged for completeness but are not owned by this feature's SOTIF plan — see Section 8.
