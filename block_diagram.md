@@ -31,29 +31,41 @@ A single, unified perception stack covering the full 360-degree field around the
 Reactive sensing unit, physically confirming contact with a road irregularity at the moment the vehicle drives over it — fundamentally different from Perception's proactive detection, since jerk data cannot exist before the vehicle reaches a hazard. Its only role is in the Verification Engine (Section 4), confirming or contradicting a candidate at the moment of encounter. Fails independently of the visual-artifact conditions that affect camera/LiDAR, consistent with the multi-modal-redundancy basis in [3]. Reports its own operational health state; a faulted sensor is treated by the Verification Engine as an unknown reading, not a confirmed absence of jerk.
 
 ### 3. Pothole Cloud-Overlay Engine
-Single responsibility: produce one correctly-formatted pothole entry, sent to both the World Model Builder and the Verification Engine.
-- **Inputs:** Perception's pothole candidates (Section 1); the Connectivity Manager's cloud-advisory pothole list; Localization coordinates and vehicle position.
-- **Behavior — two branches:**
-  - **VALID Live detection present:** keep it; attempt to match against the cloud-advisory list by position. If matched, attach the cloud's recommended_speed_limit as metadata (entry_type: LIVE_ENRICHED). If unmatched, forward as-is (entry_type: LIVE_ONLY) — a genuinely new candidate the cloud does not yet know about.
-  - **No usable live detection** (low confidence, or Perception has dropped pothole classification under compute pressure — this engine does not need to know which): use Localization and vehicle position to place the cloud-reported entry directly (entry_type: CLOUD_SUBSTITUTED).
-- **Output:** one entry per candidate, tagged by entry_type, to both the World Model Builder (Section 5) and the Verification Engine (Section 4). The tag itself tells Verification whether the cloud already expected this pothole, without Verification needing its own connection to the cloud's expected-list to find out.
+Single responsibility: produce one correctly-formatted pothole entry, sent to both the World Model Builder and the Verification Engine. This is the only component with visibility into both what the cloud currently expects and what Perception currently observes together — that combined view is what makes it, not Verification Engine, the right place to determine whether a cloud-expected pothole is genuinely gone.
+- **Inputs:** Perception's pothole candidates and health state (Section 1); the Connectivity Manager's cloud-advisory pothole list; Localization coordinates and vehicle position.
+- **Behavior — four branches:**
+  - **Live detection present, unmatched:** a candidate exists with no corresponding cloud entry nearby — a genuinely new candidate the cloud does not yet know about. Forwarded as-is (entry_type: LIVE_ONLY).
+  - **Live detection present, matched:** a candidate exists and correlates by position with a cloud-advisory entry. The cloud's recommended_speed_limit is attached as metadata (entry_type: LIVE_ENRICHED).
+  - **No usable live detection, Perception degraded:** perception_health_state is DEGRADED or FAULTED, or confidence is too low to use — this engine cannot tell whether a cloud-expected pothole is genuinely absent or simply wasn't looked at properly. Falls back to the cloud-reported entry, positioned via Localization (entry_type: CLOUD_SUBSTITUTED).
+  - **No usable live detection, Perception nominal, cloud expects a pothole here:** perception_health_state is NOMINAL, the vehicle's current position (via Localization) corresponds to a cloud-advisory entry, and no live candidate was produced at that location. This is a confident visual non-detection with healthy sensors — a materially stronger signal than the degraded-compute case above, and is tagged distinctly (entry_type: CLOUD_CLEAR).
+- **Output:** one entry per candidate or cloud-expected location, tagged by entry_type, to both the World Model Builder (Section 5) and the Verification Engine (Section 4). World Model Builder treats CLOUD_CLEAR entries as a no-op — a confirmed absence isn't hazard content the world model needs to represent — while Verification Engine uses it as the primary signal for reporting CLEARED (Section 4).
+- **Own real-time budget:** this engine's matching logic (correlating potentially multiple live candidates against a cloud-advisory list that can itself contain many entries in a dense area) has its own compute cost, separate from and in addition to the World Model Builder's and Path Planner's real-time budgets (Section 8) — see hara.md item #6.
 
 ### 4. Verification Engine
-Single responsibility: validate or invalidate a pothole entry using physical confirmation, and report status to the cloud. Consumes the Overlay Engine's already-reconciled entry (Section 3).
-- **Inputs:** the Overlay Engine's tagged entry (Section 3); Jerk sensor readings (Section 2), consumed as the vehicle reaches the location; Localization coordinates, needed to attach report coordinates for LIVE_ONLY and LIVE_ENRICHED entries, which do not carry lat/lon (Path Planner has no use for it there — see Section 5's rationale).
-- **Behavior:** the entry_type tag alone indicates whether the cloud already expected this pothole (LIVE_ENRICHED or CLOUD_SUBSTITUTED) or not (LIVE_ONLY); combined with jerk confirming or contradicting physical presence, this determines NEW / ACTIVE / CLEARED.
-- **Output:** a validated report (status, location, dimensions) to the Connectivity Manager. Does not feed the world model or Path Planner.
+Single responsibility: determine and report a pothole's status to the cloud, using entry_type (from the Overlay Engine) combined with physical confirmation (from Jerk) as two independent signals — neither alone is treated as sufficient for a CLEARED determination.
+- **Inputs:** the Overlay Engine's tagged entry (Section 3), which now carries lat/lon for every entry_type, not only cloud-sourced ones; Jerk sensor readings (Section 2), treated as an ongoing stream rather than a single point-in-time value; live Localization coordinates, distinct from the entry's static lat/lon — this tells Verification Engine where the vehicle currently is, so it can check that position against an entry's stored location at the moment a candidate jerk event arrives; Vehicle Speed, used both to calibrate jerk severity (the same jerk magnitude indicates a much deeper pothole at 15 mph than at 70 mph) and, combined with a live entry's distance_to_pothole_m and timestamp, to estimate roughly when to expect confirmation.
+- **Correlating a jerk event to the right entry:** for LIVE_ONLY and LIVE_ENRICHED entries, both a kinematic estimate (distance + speed + timestamp) and a live position check are available and used together — the kinematic estimate alone is approximate, since vehicle speed can change between detection and arrival, especially if Path Planner brakes in response to the same detection. For CLOUD_SUBSTITUTED and CLOUD_CLEAR entries, which carry no live distance measurement, the live position check is the only correlation mechanism available.
+- **Behavior:**
+  - LIVE_ONLY + jerk confirms -> NEW
+  - LIVE_ENRICHED or CLOUD_SUBSTITUTED + jerk confirms -> ACTIVE
+  - CLOUD_CLEAR + jerk does not fire (expected, consistent) -> CLEARED
+  - CLOUD_CLEAR + jerk unexpectedly fires -> ACTIVE (physical evidence overrides a visual non-detection, not the other way around)
+  - Any other combination (jerk absent for LIVE_ONLY, LIVE_ENRICHED, or CLOUD_SUBSTITUTED) -> no report. Jerk absence alone is ambiguous — it could mean the pothole isn't there, or that Path Planner successfully executed an avoidance maneuver and the vehicle never drove over it. This feature has no visibility into, and no need to know about, what maneuver Path Planner executed or whether one occurred at all — it simply does not assert a status it cannot support. Only the Overlay Engine's CLOUD_CLEAR determination, based on a confident visual re-scan with healthy sensors, is treated as sufficient grounds for CLEARED.
+- **Output:** a validated report (status, location, dimensions) to the Connectivity Manager, using the lat/lon it received on the entry directly. Does not feed the world model or Path Planner.
 
 ### 5. World Model Builder (baseline — not defined by this feature)
-Consumes outputs from Perception and other vehicle perceivers, including this feature's tagged pothole entries (Section 3), and continually maintains the unified world model Path Planner consumes, consistent with [1]. This feature contributes one input to it; it does not define, own, or redraw this component's own internal structure or its other inputs.
+Consumes outputs from Perception and other vehicle perceivers, including this feature's tagged pothole entries (Section 3), and continually maintains the unified world model Path Planner consumes, consistent with [1]. CLOUD_CLEAR entries are ignored — a confirmed absence is not hazard content. This feature contributes one input to it; it does not define, own, or redraw this component's own internal structure or its other inputs.
 
 ### 6. Telemetry & Storage Layer (Communication)
 - **Connectivity Manager:** Sends the Verification Engine's validated reports to the Cloud Server, and supplies the cloud-advisory pothole list to the Pothole Cloud-Overlay Engine (Section 3). Intermittent, partial, or corrupted-in-transit messages — distinct from a clean full disconnection — are rejected outright and not partially processed.
+
+    Note: The Connectivity Manager is assumed to authenticate and validate all incoming cloud data (anti-spoofing, checksum, format checks) at the point it receives it from the network, before forwarding to any consumer. Baseline architecture — Connectivity Manager almost certainly serves cloud-connected vehicle features beyond this one, so this function is not this feature's to define.
+
 - **Local Datalogger (The Fallback):** If cellular/Wi-Fi connection drops entirely, this logs the encrypted data locally. Upon reaching a service bay or re-establishing connection, it executes a bulk sync.
 
 ### 7. Cloud Infrastructure (Fleet Intelligence)
 - **Central Pothole Database:** Stores all geotagged anomalies reported by the fleet.
-- **Map Update & Healing Engine:** Aggregates data. If a vehicle reports a pothole, it adds it. If multiple vehicles pass a known pothole location and report "no anomaly detected," this engine clears the pothole from the database. Also where recommended_speed_limit is computed — a more sophisticated, non-real-time algorithm, consistent with the edge/cloud compute-split basis in [5].
+- **Map Update & Healing Engine:** Aggregates data. If a vehicle reports a pothole, it adds it. If multiple vehicles report CLEARED for a known pothole location, this engine clears it from the database. The aggregation logic's independence assumptions (e.g., whether it weights reports differently based on how a CLEARED status was reached) are not defined by this feature. Also where recommended_speed_limit is computed — a more sophisticated, non-real-time algorithm, consistent with the edge/cloud compute-split basis in [5].
 - **Downstream API:** Broadcasts upcoming road conditions to vehicles in the specific geographic sector.
 
 ### 8. Path planner and Vehicle controls
@@ -68,62 +80,63 @@ flowchart TD
         O[Vehicle Speed Calculator]
         VC[Vehicle Controls <br/> Steering/Braking]
     end
-
+ 
     subgraph WorldModel [World Model Builder - baseline, not defined by this feature]
         WM[World Model Builder]
     end
-
+ 
     subgraph PathPlanner [Vehicle Path Planner]
         PP[Central Path Planner <br/> Trajectory Arbitration & Mitigation]
     end
-
+ 
     subgraph PerceptionSystem [Perception - unified 360deg, includes pothole detection]
         P[Perception System]
     end
-
+ 
     subgraph JerkSensor [Jerk IMU Sensor]
         J[Jerk/IMU Sensor]
     end
-
+ 
     subgraph Localization [Localization]
         L[Localization Module]
     end
-
+ 
     subgraph PotholeSystem [Pothole-Specific Components]
         OV[Pothole Cloud-Overlay Engine]
         VE[Verification Engine]
     end
-
+ 
     subgraph Telemetry [Telemetry & Storage]
         CM[Connectivity Manager]
         DL[(Local Datalogger)]
     end
-
+ 
     subgraph Cloud [Cloud Infrastructure]
         API[Cloud API Gateway]
         HE[Map Update & Healing Engine]
         DB[(Central Pothole Database)]
     end
-
+ 
     %% Perception: raw detection only, no severity category
-    P -->|Pothole candidates: distance, dims, confidence| OV
+    P -->|timestamp, Pothole candidates: distance, dims, confidence, perception_health_state| OV
     P -.->|General object/lane content - baseline, not this feature| WM
-
+ 
     %% Localization supports Overlay (matching/positioning) and Verification (reporting)
     L -->|Coordinates + localization_confidence| OV
-    L -->|Coordinates + localization_confidence| VE
-
+    L -->|Live position for jerk-event correlation| VE
+    O -->|Vehicle Speed: jerk calibration + arrival-time estimate| VE
+ 
     %% Cloud overlay logic - Overlay Engine's output feeds BOTH world model and Verification
-    CM -->|Advisory Pothole List| OV
-    OV -->|Tagged entry: LIVE_ONLY / LIVE_ENRICHED / CLOUD_SUBSTITUTED| WM
-    OV -->|Same tagged entry| VE
-
+    CM -->|timestamp, Advisory Pothole List| OV
+    OV -->|timestamp, Tagged entry: LIVE_ONLY / LIVE_ENRICHED / CLOUD_SUBSTITUTED / CLOUD_CLEAR| WM
+    OV -->|Same tagged entry, CLOUD_CLEAR is a no-op for WM| VE
+ 
     %% Jerk validates against the Overlay Engine's entry, not raw Perception
     J -->|Jerk value, Confidence, sensor_health_state| VE
-
+ 
     %% World Model Builder feeds Path Planner - baseline
     WM -->|World Model| PP
-
+ 
     %% Verification reports to cloud, separate from the world model path
     VE -->|Validated report: status, location, dims| CM
     CM -- "Network Down" --> DL
@@ -131,7 +144,7 @@ flowchart TD
     CM <-->|"Cellular/Wi-Fi, partial/corrupted rejected"| API
     API <-->|New Report / Status Update| HE
     HE <-->|Read/Write/Clear| DB
-
+ 
     %% Connections not defined by this feature - baseline vehicle functionality
     O -.->|Vehicle Speed| PP
     PP -.->|Final Arbitrated Command| VC
