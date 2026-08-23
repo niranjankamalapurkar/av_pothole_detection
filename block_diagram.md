@@ -4,75 +4,87 @@
 
 This design is built on patterns documented in current AV perception/planning literature and patents, rather than an ad-hoc pipeline invented for this feature. Key assumptions and the basis for each:
 
-1. **A dedicated World Model Builder, separate from both Perception and Path Planner.** Documented AV drive-stack architecture has a world model manager that consumes outputs from multiple distinct perception components (an obstacle perceiver, a path perceiver, a wait-condition perceiver, a map perceiver) and continually updates a unified world model as new inputs arrive, which then feeds planning and control [1]. This feature does not build or redefine that component — it is baseline vehicle architecture, in the same category as Path Planner itself; this feature's only responsibility is to correctly feed it (Section 5).
-2. **A single, unified 360-degree perception system, not per-direction subsystems.** Multi-sensor AV perception is documented as fusing camera and LiDAR data from multiple zones into one unified representation rather than maintaining separate subsystems per direction [4]; some architectures fuse directly into a shared bird's-eye-view representation for exactly this reason [2].
-3. **Detection, classification, and tracking are commonly distinct algorithmic stages within Perception** [3]. This diagram does not decompose Perception's internals to that level, consistent with system-level architecture abstraction.
-4. **Perception stays lightweight: raw detection data only, no severity categorization or response planning.** Real-time multi-sensor fusion pipelines are documented as needing to trade model sophistication for feasibility on embedded, resource-constrained hardware [5]. This motivates keeping Perception's output limited to object geometry and a confidence score — severity interpretation and response strategy belong downstream, where they can draw on more context (Path Planner's own speed, cloud data) without adding to Perception's real-time burden.
-5. **Multi-sensor redundancy across independent modalities is standard industry practice**, not a design choice specific to this feature — documented AV sensor suites (e.g., Waymo, Baidu Apollo) combine camera, LiDAR, and radar specifically for redundancy [3].
+1. **Road-surface data is fused as layers within the World Model Builder's existing layered costmap, not handled by a dedicated sidecar component.** Documented architecture maintains an ordered list of layers, each tracking data from a specific functionality or sensor type, accumulated into one master costmap [1] — this feature contributes a Prior layer (cloud-sourced) and a Live layer (Perception-sourced) to that existing structure, rather than performing its own separate object-level matching before handing off a result. The World Model Builder's own fusion mechanism (how it combines layers into one confidence estimate per cell) is baseline — this feature defines what goes into the layers, not how the builder fuses them.
+2. **A single, unified 360-degree perception system, not per-direction subsystems.** Multi-sensor AV perception is documented as fusing camera and LiDAR data from multiple zones into one unified representation [4]; some architectures fuse directly into a shared bird's-eye-view representation for exactly this reason [2].
+3. **Detection, classification, and tracking are commonly distinct algorithmic stages within Perception** [3]. This diagram does not decompose Perception's internals to that level.
+4. **Perception stays lightweight: raw detection data only, no severity categorization or response planning.** This motivates keeping Perception's output limited to object geometry and a confidence score [5] — severity interpretation and response strategy belong downstream.
+5. **Robustness against a single observation being wrong comes from fleet-scale diversity of independent observations over time, not from redundant onboard sensor modalities.** Crowdsourced road-condition systems are documented as building confidence by aggregating observations across many vehicles and passes [6][7], rather than requiring a single vehicle to physically confirm a hazard before reporting it. This feature does not use a physical confirmation sensor (e.g., jerk/IMU) at all — a genuinely correct visual detection should not go unreported merely because the vehicle successfully avoided the hazard it detected, and the aggregate multi-vehicle, multi-condition observation record is a more scalable and more complete confidence mechanism than any single vehicle's physical confirmation could be.
+6. **A pothole is represented as a local 2.5D depth-grid patch, not a bounding-box summary.** 2.5D elevation maps — a 2D grid where each cell stores a height/depth value — are documented, standard practice for representing terrain and road-surface geometry in robotics and off-road/on-road navigation stacks [8][9], including systems that explicitly generate a grid of depth values for pothole-containing road sections rather than a dimensional summary [10]. This is the accurate representation for Path Planner's purposes: it allows computing how much a specific tire would actually drop at a given point in the anomaly, rather than working from a single averaged depth figure. A bounding-box summary was carried in earlier versions of this design and is corrected in this revision (see Version History) — it was inconsistent with having already adopted grid-based layer fusion (point 1 above), since a bounding box still requires object-level interpretation downstream, the very thing grid fusion is meant to eliminate.
 
 **References**
-[1] NVIDIA, "Sensor fusion for autonomous machine applications using machine learning," U.S. Patent. https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/12307788
+[1] Layered Cost Map patent, describing an ordered list of layers accumulated into a master costmap. https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/12236779
 [2] Roberge, "BEVFusion: Unifying Vision in Autonomous Driving Systems," Medium, 2025. https://medium.com/demistify/av-vol-3-bevfusion-unifying-vision-in-autonomous-driving-systems-b2190f877c9b
 [3] "Sensor Fusion and Perception for Autonomous Driving: A Critical Review of Modalities, AI Models, Algorithms, and Industry Configurations," MAKE, 2026. https://doi.org/10.3390/make8070199
 [4] "A Review of Multi-Sensor Fusion in Autonomous Driving," MDPI Sensors, 2025. https://www.mdpi.com/1424-8220/25/19/6033
 [5] "Real-Time Hybrid Multi-Sensor Fusion Framework for Perception in Autonomous Vehicles," MDPI Sensors, 2019. https://www.mdpi.com/1424-8220/19/20/4357
+[6] "Sustainable Road Pothole Detection: A Crowdsourcing Based Multi-Sensors Fusion Approach," Sustainability, 2023. https://www.mdpi.com/2071-1050/15/8/6610
+[7] "Pothole Patrol (P2)" — opportunistic crowdsourced road-condition sensing across a vehicle fleet. https://www.researchgate.net/publication/283111351_Road_anomaly_estimation_Model_based_pothole_detection
+[8] "Occupancy-elevation grid: an alternative approach for robotic mapping and navigation" — defines 2.5D elevation maps, each grid cell storing a height value. https://www.cambridge.org/core/services/aop-cambridge-core/content/view/94FC3DD044922CE20CC074D9EADB18B9/S0263574715000235a.pdf/div-class-title-occupancy-elevation-grid-an-alternative-approach-for-robotic-mapping-and-navigation-div.pdf
+[9] "An Open-Source LiDAR and Monocular Off-Road Autonomous Navigation Stack" — generates a robot-centric 2.5D elevation map for costmap-based planning. https://arxiv.org/pdf/2604.03096
+[10] "Method and system for navigating vehicles based on road conditions determined in real-time" — digital elevation images with per-grid depth/height values, explicitly applied to road sections containing potholes. https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/11417119
 
-These are cited to explain *why* this architecture is shaped the way it is, not as a claim that this document reproduces any cited system exactly — the specific components below are this project's own design, built consistent with the patterns these sources document.
+These are cited to explain *why* this architecture is shaped the way it is, not as a claim that this document reproduces any cited system exactly.
 
 ---
 
 ### 1. Perception (includes pothole detection)
-A single, unified perception stack covering the full 360-degree field around the vehicle (Camera + LiDAR, fused into one representation), consistent with [2] and [4]. Internally comprises detection, classification, and tracking — commonly separate stages per [3] — not decomposed further in this diagram. Pothole detection is one object/hazard class among others (vehicles, pedestrians, lane markings), not a separate feature bolted onto Perception.
-- **Output, per pothole candidate:** distance from ego vehicle, estimated dimensions, and a confidence score — basic tracking/distance and detection information only. Nothing about severity category or response strategy; that is Path Planner's job, not Perception's, consistent with [5].
-- **Two independent signals, not derived from one another:** pothole_confidence_score is a per-detection quality signal, produced only when a candidate exists. perception_health_state (NOMINAL / DEGRADED / FAULTED) is a system-level compute/thermal status, independent of any specific detection's confidence. Under thermal throttling or fail-operational conditions, pothole classification is dropped first — Perception's own internal prioritization — while primary object detection continues; this is a statement about compute health, unrelated to how confident any given detection might be.
-- **Output routing:** general object/lane content feeds the World Model Builder (Section 5) directly — baseline vehicle architecture, not defined by this feature. Pothole candidates feed the Pothole Cloud-Overlay Engine (Section 3), this feature's only consumer of Perception's pothole-specific output.
+A single, unified perception stack covering the full 360-degree field around the vehicle (Camera + LiDAR, fused into one representation), consistent with [2] and [4]. Internally comprises detection, classification, and tracking [3], not decomposed further here. Pothole detection is one object/hazard class among others, not a separate feature bolted onto Perception.
 
-### 2. Jerk/IMU sensor
-Reactive sensing unit, physically confirming contact with a road irregularity at the moment the vehicle drives over it — fundamentally different from Perception's proactive detection, since jerk data cannot exist before the vehicle reaches a hazard. Its only role is in the Verification Engine (Section 4), confirming or contradicting a candidate at the moment of encounter. Fails independently of the visual-artifact conditions that affect camera/LiDAR, consistent with the multi-modal-redundancy basis in [3]. Reports its own operational health state; a faulted sensor is treated by the Verification Engine as an unknown reading, not a confirmed absence of jerk.
+- **Output, per pothole candidate:** distance from ego vehicle, a local 2.5D depth-grid patch (relative elevation/depth values across a small N×M cell area, per [8][9][10]), and a confidence score. No persistent identifier is assigned here — grid-based fusion (Section 3) identifies locations by spatial cell, not by object ID, so Perception does not need to track candidate identity across cycles.
 
-### 3. Pothole Cloud-Overlay Engine
-Single responsibility: produce one correctly-formatted pothole entry, sent to both the World Model Builder and the Verification Engine. This is the only component with visibility into both what the cloud currently expects and what Perception currently observes together — that combined view is what makes it, not Verification Engine, the right place to determine whether a cloud-expected pothole is genuinely gone.
-- **Inputs:** Perception's pothole candidates and health state (Section 1); the Connectivity Manager's cloud-advisory pothole list; Localization coordinates and vehicle position.
-- **Behavior — four branches:**
-  - **Live detection present, unmatched:** a candidate exists with no corresponding cloud entry nearby — a genuinely new candidate the cloud does not yet know about. Forwarded as-is (entry_type: LIVE_ONLY).
-  - **Live detection present, matched:** a candidate exists and correlates by position with a cloud-advisory entry. The cloud's recommended_speed_limit is attached as metadata (entry_type: LIVE_ENRICHED).
-  - **No usable live detection, Perception degraded:** perception_health_state is DEGRADED or FAULTED, or confidence is too low to use — this engine cannot tell whether a cloud-expected pothole is genuinely absent or simply wasn't looked at properly. Falls back to the cloud-reported entry, positioned via Localization (entry_type: CLOUD_SUBSTITUTED).
-  - **No usable live detection, Perception nominal, cloud expects a pothole here:** perception_health_state is NOMINAL, the vehicle's current position (via Localization) corresponds to a cloud-advisory entry, and no live candidate was produced at that location. This is a confident visual non-detection with healthy sensors — a materially stronger signal than the degraded-compute case above, and is tagged distinctly (entry_type: CLOUD_CLEAR).
-- **Output:** one entry per candidate or cloud-expected location, tagged by entry_type, to both the World Model Builder (Section 5) and the Verification Engine (Section 4). World Model Builder treats CLOUD_CLEAR entries as a no-op — a confirmed absence isn't hazard content the world model needs to represent — while Verification Engine uses it as the primary signal for reporting CLEARED (Section 4).
-- **Own real-time budget:** this engine's matching logic (correlating potentially multiple live candidates against a cloud-advisory list that can itself contain many entries in a dense area) has its own compute cost, separate from and in addition to the World Model Builder's and Path Planner's real-time budgets (Section 8) — see hara.md item #6.
+- **Two independent signals:** pothole_confidence_score is a per-detection quality signal. perception_health_state (NOMINAL / DEGRADED / FAULTED) is a system-level compute/thermal status, independent of it. Under compute pressure, pothole classification is dropped first — Perception's own internal prioritization.
 
-### 4. Verification Engine
-Single responsibility: determine and report a pothole's status to the cloud, using entry_type (from the Overlay Engine) combined with physical confirmation (from Jerk) as two independent signals — neither alone is treated as sufficient for a CLEARED determination.
-- **Inputs:** the Overlay Engine's tagged entry (Section 3), which now carries lat/lon for every entry_type, not only cloud-sourced ones; Jerk sensor readings (Section 2), treated as an ongoing stream rather than a single point-in-time value; live Localization coordinates, distinct from the entry's static lat/lon — this tells Verification Engine where the vehicle currently is, so it can check that position against an entry's stored location at the moment a candidate jerk event arrives; Vehicle Speed, used both to calibrate jerk severity (the same jerk magnitude indicates a much deeper pothole at 15 mph than at 70 mph) and, combined with a live entry's distance_to_pothole_m and timestamp, to estimate roughly when to expect confirmation.
-- **Correlating a jerk event to the right entry:** for LIVE_ONLY and LIVE_ENRICHED entries, both a kinematic estimate (distance + speed + timestamp) and a live position check are available and used together — the kinematic estimate alone is approximate, since vehicle speed can change between detection and arrival, especially if Path Planner brakes in response to the same detection. For CLOUD_SUBSTITUTED and CLOUD_CLEAR entries, which carry no live distance measurement, the live position check is the only correlation mechanism available.
-- **Behavior:**
-  - LIVE_ONLY + jerk confirms -> NEW
-  - LIVE_ENRICHED or CLOUD_SUBSTITUTED + jerk confirms -> ACTIVE
-  - CLOUD_CLEAR + jerk does not fire (expected, consistent) -> CLEARED
-  - CLOUD_CLEAR + jerk unexpectedly fires -> ACTIVE (physical evidence overrides a visual non-detection, not the other way around)
-  - Any other combination (jerk absent for LIVE_ONLY, LIVE_ENRICHED, or CLOUD_SUBSTITUTED) -> no report. Jerk absence alone is ambiguous — it could mean the pothole isn't there, or that Path Planner successfully executed an avoidance maneuver and the vehicle never drove over it. This feature has no visibility into, and no need to know about, what maneuver Path Planner executed or whether one occurred at all — it simply does not assert a status it cannot support. Only the Overlay Engine's CLOUD_CLEAR determination, based on a confident visual re-scan with healthy sensors, is treated as sufficient grounds for CLEARED.
-- **Output:** a validated report (status, location, dimensions) to the Connectivity Manager, using the lat/lon it received on the entry directly. Does not feed the world model or Path Planner.
+- **Output routing:** feeds the World Model Builder's Live layer directly (Section 3) — this feature's only defined interface for Perception's pothole-specific output. General object/lane content feeds the World Model Builder through its own baseline channels, unaffected by this feature.
 
-### 5. World Model Builder (baseline — not defined by this feature)
-Consumes outputs from Perception and other vehicle perceivers, including this feature's tagged pothole entries (Section 3), and continually maintains the unified world model Path Planner consumes, consistent with [1]. CLOUD_CLEAR entries are ignored — a confirmed absence is not hazard content. This feature contributes one input to it; it does not define, own, or redraw this component's own internal structure or its other inputs.
+### 2. Localization
+GPS and HD Map integration providing vehicle coordinates. No longer a feature-defined interface (see Section 8's note) — the World Model Builder already requires Localization for all of its layers, pothole-related or not, so this feature does not define its own separate consumption of it, unlike the prior architecture where a dedicated component needed its own direct feed.
+
+### 3. World Model Builder (baseline — layer content defined by this feature, fusion mechanism is not)
+Consumes multiple layers from Perception and other vehicle perceivers and continually maintains the unified world model Path Planner consumes, consistent with [1]. This feature contributes two layers:
+
+- **Live layer:** populated directly from Perception's pothole candidates (Section 1) — distance, a local depth-grid patch, confidence, updated every cycle.
+
+- **Prior layer:** populated directly from the Connectivity Manager's cloud-advisory pothole list (Section 6) — the cloud's last-known state for this vehicle's geographic sector, also carried as a depth-grid patch per entry.
+The World Model Builder's own fusion logic combines these two layers, per grid cell, into one fused depth-grid patch and confidence estimate — elementwise matrix fusion, the same general-purpose mechanism it already applies to combine any other set of layers into the master costmap [1]. This feature does not define that fusion algorithm; it defines what the two layers contain. There is no explicit object-level matching step (no "is Live Pothole A the same as Cloud Pothole B" correlation) — spatial co-location in the same grid cell is what fusion naturally resolves.
+
+**Behavior under degraded input — a functional requirement, distinct from the fusion algorithm above.** Fusion math assumes both inputs are trustworthy; this feature must state what happens when one is not, since that is input-quality handling specific to this channel, not something a generic fusion mechanism can be expected to know on its own:
+
+When perception_health_state is DEGRADED or FAULTED, an absent or empty Live layer for that cycle must not be treated as a confident "nothing here" — it is missing information, not a negative observation. The fused result must fall back to the Prior layer alone for that cell, not a fusion that implicitly averages a degraded absence against a valid Prior value as if it were a real zero.
+
+When the cloud-advisory list is unavailable or beyond its staleness threshold (undefined threshold, open item — see fmea.md), the Prior layer must not be treated as "nothing expected here" either — the fused result must fall back to the Live layer alone.
+When both are simultaneously degraded or unavailable, the fused result carries no meaningful signal for this channel for that cell and should not be reported at all — this reduces the vehicle to baseline (pre-feature) risk for that location
+
+### 4. Pothole Observation Reporter
+Single responsibility: watch the fused Live+Prior confidence in the vehicle's local grid window and, when a change is significant enough to be worth sharing, emit a lightweight observation report to the Connectivity Manager. This is a much thinner role than the prior architecture's Verification Engine — it does not determine NEW / ACTIVE / CLEARED status. A single vehicle was never actually positioned to make that determination on its own; it is inherently a fleet-level judgment, made by aggregating many vehicles' observations (Section 5), and that aggregation requires each observation to carry an absolute location — the cloud cannot fuse reports from different vehicles without knowing where each one was taken.
+
+- **Input:** the World Model Builder's fused grid-cell output for the pothole/road-surface channel (Section 3), including each cell's absolute lat/lon — not just a relative grid position. This component does not need its own separate Localization feed as a result: the World Model Builder is assumed to convert its (typically ego-relative) grid representation to absolute coordinates internally, using its own Localization access (Baseline Dependency E), before exposing fused output here — consistent with it already needing a global reference to correlate against HD maps for its other functions. **This is an assumption about baseline behavior, not something this feature can verify** — if the World Model Builder does not actually perform this conversion (e.g., if it only exposes ego-relative positions internally), this component would need its own direct Localization access after all, reopening a dependency this design otherwise eliminates.
+
+- **Behavior:** a threshold/debounce condition (exact values TBD, a validation-team deliverable, not asserted here) determines when a change in fused confidence is worth reporting — avoiding reporting every frame's minor fluctuation.
+
+- **Output:** an observation report — absolute patch position (patch_center_lat/lon), fused confidence, the fused depth-grid patch, timestamp, and a vehicle/session identifier (needed downstream so the cloud can distinguish genuinely different vehicles from the same vehicle reporting repeatedly) — to the Connectivity Manager. Does not assert a status; that determination happens only after aggregation (Section 5).
+
+### 5. Cloud Infrastructure (Fleet Intelligence)
+
+- **Central Pothole Database:** Stores all geotagged anomalies as depth-grid patches, each with the cloud's own persistent identifier — assigned by the cloud when it creates an entry from aggregated observations, not carried by any individual vehicle's report.
+
+- **Map Update & Healing Engine:** This is now the sole place NEW / ACTIVE / CLEARED status is determined — aggregating observation reports across multiple vehicles by matching their reported lat/lon, weighted by independence, before updating the database. Independence is the load-bearing safeguard against correlated false positives (e.g., many vehicles passing the same location under the same lighting all misreading the same shadow) — at minimum, diversity in reporting time (from each report's timestamp) and diversity in reporting vehicle (from the vehicle/session identifier) are available signals; whether additional context (weather, lighting condition) is needed for a more robust independence check is not currently modeled in this architecture and remains an explicit open item. Also where recommended_speed_limit is computed — a more sophisticated, non-real-time algorithm, consistent with the edge/cloud compute-split basis in [5].
+
+- **Downstream API:** Broadcasts the aggregated advisory list to vehicles in the specific geographic sector.
 
 ### 6. Telemetry & Storage Layer (Communication)
-- **Connectivity Manager:** Sends the Verification Engine's validated reports to the Cloud Server, and supplies the cloud-advisory pothole list to the Pothole Cloud-Overlay Engine (Section 3). Intermittent, partial, or corrupted-in-transit messages — distinct from a clean full disconnection — are rejected outright and not partially processed.
 
-    Note: The Connectivity Manager is assumed to authenticate and validate all incoming cloud data (anti-spoofing, checksum, format checks) at the point it receives it from the network, before forwarding to any consumer. Baseline architecture — Connectivity Manager almost certainly serves cloud-connected vehicle features beyond this one, so this function is not this feature's to define.
+- **Connectivity Manager:** Relays the Pothole Observation Reporter's reports to the Cloud Server, and supplies the cloud-advisory pothole list to the World Model Builder's Prior layer (Section 3). Intermittent, partial, or corrupted-in-transit messages — distinct from a clean full disconnection — are rejected outright and not partially processed.
+    * Note: The Connectivity Manager is assumed to authenticate and validate all incoming cloud data at the point it receives it from the network, before forwarding to any consumer. Baseline architecture, not this feature's to define.
 
-- **Local Datalogger (The Fallback):** If cellular/Wi-Fi connection drops entirely, this logs the encrypted data locally. Upon reaching a service bay or re-establishing connection, it executes a bulk sync.
+- **Local Datalogger (The Fallback):** If cellular/Wi-Fi connection drops entirely, this logs the encrypted data locally and executes a bulk sync upon reconnection.
 
-### 7. Cloud Infrastructure (Fleet Intelligence)
-- **Central Pothole Database:** Stores all geotagged anomalies reported by the fleet.
-- **Map Update & Healing Engine:** Aggregates data. If a vehicle reports a pothole, it adds it. If multiple vehicles report CLEARED for a known pothole location, this engine clears it from the database. The aggregation logic's independence assumptions (e.g., whether it weights reports differently based on how a CLEARED status was reached) are not defined by this feature. Also where recommended_speed_limit is computed — a more sophisticated, non-real-time algorithm, consistent with the edge/cloud compute-split basis in [5].
-- **Downstream API:** Broadcasts upcoming road conditions to vehicles in the specific geographic sector.
+### 7. Path planner and Vehicle controls
 
-### 8. Path planner and Vehicle controls
-- **Path Planning System:** Ingests the world model from the World Model Builder (Section 5) — its only input, for this feature or any other perceiver. This feature has no direct connection to Path Planner at all. Computes its own severity response — Perception and the Overlay Engine send only confidence, dimensions, distance (or, for cloud-substituted entries, severity_index and recommended_speed_limit), never a pre-decided response category; Path Planner combines this with its own current-speed reading (Baseline Dependency A) to compute an actual bounded response. Bounds the magnitude of any pothole-avoidance response to a low, pre-set ceiling regardless of how the vehicle's existing arbitration logic weighs it against other candidates.
-- **Vehicle Controls (Actuation):** Executes the steering or braking commands generated by the Path Planning System. This connection (Baseline Dependency B) is pre-existing vehicle architecture — this feature does not define it.
+- **Path Planning System:** Ingests the world model from the World Model Builder — its only input, for this feature or any other perceiver. This feature has no direct connection to Path Planner at all, and does not command, request, or track whether any maneuver is executed — that determination, and any bound on the magnitude or type of response, is Path Planner's own pre-defined, inherited arbitration logic.
 
-**Note on connections not defined by this feature:** Vehicle Speed Calculator → Central Path Planner (Path Planner's own speed input), the World Model Builder → Path Planner connection (Section 5), and Central Path Planner → Vehicle Controls are all baseline vehicle architecture, not drawn as feature-specific interfaces.
+- **Vehicle Controls (Actuation):** Executes the steering or braking commands generated by the Path Planning System. Pre-existing vehicle architecture — this feature does not define it.
+
+**Note on connections not defined by this feature:** Vehicle Speed Calculator → Central Path Planner, the World Model Builder → Path Planner connection, Central Path Planner → Vehicle Controls, and Localization → World Model Builder are all baseline vehicle architecture, not drawn as feature-specific interfaces. The last of these is new to this revision — the prior architecture's dedicated Overlay Engine needed its own direct Localization feed; that need no longer exists.
 
 ```mermaid
 flowchart TD
@@ -80,71 +92,58 @@ flowchart TD
         O[Vehicle Speed Calculator]
         VC[Vehicle Controls <br/> Steering/Braking]
     end
- 
-    subgraph WorldModel [World Model Builder - baseline, not defined by this feature]
-        WM[World Model Builder]
+
+    subgraph WorldModel [World Model Builder - baseline fusion, feature-defined layers]
+        WM[World Model Builder<br/>Live layer + Prior layer]
     end
- 
+
     subgraph PathPlanner [Vehicle Path Planner]
         PP[Central Path Planner <br/> Trajectory Arbitration & Mitigation]
     end
- 
+
     subgraph PerceptionSystem [Perception - unified 360deg, includes pothole detection]
         P[Perception System]
     end
- 
-    subgraph JerkSensor [Jerk IMU Sensor]
-        J[Jerk/IMU Sensor]
-    end
- 
+
     subgraph Localization [Localization]
         L[Localization Module]
     end
- 
+
     subgraph PotholeSystem [Pothole-Specific Components]
-        OV[Pothole Cloud-Overlay Engine]
-        VE[Verification Engine]
+        OR[Pothole Observation Reporter]
     end
- 
+
     subgraph Telemetry [Telemetry & Storage]
         CM[Connectivity Manager]
         DL[(Local Datalogger)]
     end
- 
+
     subgraph Cloud [Cloud Infrastructure]
         API[Cloud API Gateway]
-        HE[Map Update & Healing Engine]
+        HE[Map Update & Healing Engine<br/>NEW/ACTIVE/CLEARED determination]
         DB[(Central Pothole Database)]
     end
- 
-    %% Perception: raw detection only, no severity category
-    P -->|timestamp, Pothole candidates: distance, dims, confidence, perception_health_state| OV
-    P -.->|General object/lane content - baseline, not this feature| WM
- 
-    %% Localization supports Overlay (matching/positioning) and Verification (reporting)
-    L -->|Coordinates + localization_confidence| OV
-    L -->|Live position for jerk-event correlation| VE
-    O -->|Vehicle Speed: jerk calibration + arrival-time estimate| VE
- 
-    %% Cloud overlay logic - Overlay Engine's output feeds BOTH world model and Verification
-    CM -->|timestamp, Advisory Pothole List| OV
-    OV -->|timestamp, Tagged entry: LIVE_ONLY / LIVE_ENRICHED / CLOUD_SUBSTITUTED / CLOUD_CLEAR| WM
-    OV -->|Same tagged entry, CLOUD_CLEAR is a no-op for WM| VE
- 
-    %% Jerk validates against the Overlay Engine's entry, not raw Perception
-    J -->|Jerk value, Confidence, sensor_health_state| VE
- 
-    %% World Model Builder feeds Path Planner - baseline
-    WM -->|World Model| PP
- 
-    %% Verification reports to cloud, separate from the world model path
-    VE -->|Validated report: status, location, dims| CM
+
+    %% Perception feeds Live layer directly - no sidecar matching component
+    P -->|Live layer: distance, depth-grid patch, confidence, perception_health_state| WM
+    L -.->|Position - baseline, no longer feature-defined| WM
+
+    %% Cloud feeds Prior layer directly
+    CM -->|Prior layer: cloud-advisory depth-grid patches| WM
+
+    %% Fused output triggers observation reports
+    WM -->|Fused depth-grid patch + confidence + absolute lat/lon| OR
+    OR -->|Observation report: lat/lon, confidence, depth-grid patch, vehicle_id, timestamp| CM
+
     CM -- "Network Down" --> DL
     DL -- "Connection Restored" --> CM
     CM <-->|"Cellular/Wi-Fi, partial/corrupted rejected"| API
-    API <-->|New Report / Status Update| HE
-    HE <-->|Read/Write/Clear| DB
- 
+    API <-->|Observation reports / Advisory updates| HE
+    HE <-->|Read/Write/Clear, independence-weighted aggregation| DB
+
+    %% World Model Builder feeds Path Planner - baseline
+    WM -->|World Model| PP
+
     %% Connections not defined by this feature - baseline vehicle functionality
     O -.->|Vehicle Speed| PP
     PP -.->|Final Arbitrated Command| VC
@@ -162,3 +161,14 @@ flowchart TD
  - Feature updated to be inline with state of the art AV architecture. World Model Builder introduced as explicit baseline architecture. Path Planner's only input became the World Model Builder's output.
  - Introduced Pothole Cloud-Overlay Engine.
  - Central Path Planner → Vehicle Controls moved from a feature-defined interface to Baseline Dependency
+
+**Version 4.** 
+Current. A fundamental restructuring, following independent review against documented SOTA patterns (layered costmap fusion; crowdsourced, sensor-independent confidence aggregation):
+
+- Pothole Cloud-Overlay Engine and Verification Engine eliminated as distinct components. Their function is replaced by two layers (Live, Prior) fed directly into the World Model Builder's existing layered-costmap fusion mechanism, and a much thinner Pothole Observation Reporter that triggers lightweight reports on significant fused-confidence change — no explicit object-level matching, no entry_type state machine.
+- Jerk/IMU sensor removed entirely. Physical confirmation is no longer part of this feature's design. The robustness argument shifts from onboard sensor redundancy to fleet-scale observation diversity — multiple vehicles, multiple times, multiple conditions — consistent with documented crowdsourced road-condition systems [6][7]. This closes the avoidance paradox completely (not just for CLEARED, as Version 4 did, but for NEW/ACTIVE too): a vehicle that visually detects and then successfully avoids a real pothole still reports what it saw, since reporting no longer depends on physical contact at all.
+- NEW/ACTIVE/CLEARED determination moved entirely to the cloud's Map Update & Healing Engine, aggregating observation reports across vehicles. A single vehicle no longer asserts a status — it reports an observation. Independence of reports (not just their count) is now the single most safety/quality-relevant open question in this design, since it is the sole defense against correlated false positives with the physical-confirmation backstop removed.
+- pothole_id removed from Perception's and the Reporter's outputs — grid-based fusion identifies locations spatially, not by persistent object ID. Retained on cloud-sourced data, where it reflects the cloud database's own internal bookkeeping.
+- Localization → World Model Builder reclassified from a feature-defined interface to a baseline dependency — the dedicated component that needed its own direct feed no longer exists.
+- Clarification within this version: made explicit that the World Model Builder's fused output to the Pothole Observation Reporter carries absolute lat/lon, not just an internal grid position, and stated as an explicit assumption that the World Model Builder performs the local-to-global conversion itself — cloud-side fleet aggregation depends on this, and it was previously described too vaguely ("already spatially referenced") to make that dependency clear.
+- Pothole representation is now a local 2.5D depth-grid patch — a small N×M matrix of relative elevation/depth values at a defined grid resolution, centered on an absolute lat/lon for cloud-sourced or fused entries — consistent with documented 2.5D elevation-map practice for road-surface representation
