@@ -148,8 +148,8 @@ Action: specify explicit, unambiguous "no data" handling in the fusion/degraded-
 **Finding 4 —** Cloud-advisory list staleness threshold undefined
 
 interfaces.md #2 carries a timestamp, but nothing states how old is too old for the degraded-input-handling logic to treat it as unavailable.
-
-Action: define a staleness threshold, past which the Prior layer is treated as absent rather than authoritative.
+    * Action: define a staleness threshold, past which the Prior layer is treated as absent rather than authoritative.
+    * Status: **Resolved.** WMB-NFR-05 addresses the Prior layer's freshness concern via a direction-of-travel exclusion check rather than a staleness threshold. 
 
 **Finding 5 —** World Model Builder's grid-patch fusion has no bounded compute cost and no shedding priority under load
 
