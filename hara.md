@@ -5,7 +5,7 @@ This document is limited to hazard identification and ASIL classification for **
 
 ## 1. Purpose
 
-This feature integrates road-surface/pothole content directly into the World Model Builder's existing layered-costmap fusion, and reports observations to the cloud for fleet-level aggregation. This document determines:
+This feature integrates road-surface/pothole content directly into the World Model Builder's existing multi-layer, multi-channel world-representation fusion, and reports observations to the cloud for fleet-level aggregation. This document determines:
 
 1. Which existing item(s) this feature modifies, and whether it introduces a separately classifiable item of its own.
 2. Whether the feature introduces functional-safety hazardous events not already covered by existing analysis (vs. SOTIF, vs. no safety relevance).
