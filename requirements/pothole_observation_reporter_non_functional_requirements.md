@@ -29,4 +29,4 @@ The Reporter shall not send more than one report for the same physical candidate
 
 ## Open items surfaced while drafting
 
-- This requirement needs the Reporter to know current vehicle speed — not currently a defined input to this component anywhere in interfaces.md. Either a new interface (Vehicle Speed Calculator → Pothole Observation Reporter) is needed, or the perception coverage radius could be treated as a fixed constant instead of speed-adjusted, trading precision for one fewer dependency.
+- **Resolved** — this requirement needs the Reporter to know current vehicle speed; interfaces.md #4 (Vehicle Speed Calculator → Pothole Observation Reporter) now defines this, including a health/validity signal (vehicle_speed_health_state) this requirement's formula depends on being trustworthy. See pothole_observation_reporter_functional_requirements.md POR-REQ-09 for the corresponding suppress-on-invalid-speed behavior, and fmea.md Finding 8 for the residual, upstream question of whether the Vehicle Speed Calculator's actual baseline output includes a compatible signal.

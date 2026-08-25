@@ -20,7 +20,7 @@ The Reporter shall consume World Model Builder's output specifically via the roa
 **POR-REQ-02 [QM]** — Depression-depth threshold
 A grid cell shall be treated as a pothole candidate only if its fused depth value represents a depression (negative elevation relative to the surrounding road-surface baseline) of magnitude greater than **25 mm**. Positive elevation values (raised surfaces — debris, speed bumps, curbing) are explicitly out of scope for this feature and shall not be reported.
 
-*Open item this requirement surfaces:* this presupposes a sign convention (negative = below-baseline depression, positive = above-baseline) for `depth_values` that is not currently stated anywhere in interfaces.md. This must be established as part of interface #1/#2/#3's specification, not assumed here — flagged for correction in those documents.
+*Resolved:* this presupposes a sign convention (negative = below-baseline depression, positive = above-baseline) for `depth_values`, now stated explicitly in interfaces.md #1 and cross-referenced on every interface carrying depth_values (#2, #3, #5).
 
 *Basis:* FHWA's pavement distress severity classification defines potholes less than 25 mm deep as low severity, 25–50 mm as moderate, and greater than 50 mm as high severity [18]. 25 mm is used here as the minimum-candidacy threshold (matching FHWA's low-severity floor) rather than a higher severity band, since even low-severity potholes are within this feature's stated purpose (proactive comfort/avoidance, problem_statement.md) — the severity bands themselves may be useful for a future confidence/priority refinement but are not required for basic candidacy.
 
@@ -67,6 +67,15 @@ If World Model Builder's fusion process itself is unhealthy — a fault distinct
 
 *Depends on (not yet defined):* a `fusion_health_state`-equivalent field on interfaces.md #3's payload, analogous to `perception_health_state`. Not currently present.
 
+**POR-REQ-09 [QM]** — Suppress reporting on invalid vehicle speed
+If `vehicle_speed_health_state` (interfaces.md #4) is DEGRADED or FAULTED, the Reporter shall suppress all cloud reporting until a valid speed reading is available again.
+
+*Rationale:* pothole_observation_reporter_non_functional_requirements.md POR-NFR-01's deduplication suppression window depends on a trustworthy current speed reading (perception coverage radius ÷ vehicle speed). An invalid reading cannot support that calculation reliably — using it anyway risks either flooding the cloud with duplicate reports (window computed too short) or suppressing genuine new observations for an unknown, unbounded duration (window computed too long, or never expiring). Suppressing reporting entirely under this condition applies the same "don't act on untrustworthy input" principle already established in POR-REQ-07 and POR-REQ-08.
+
+*Unlike POR-REQ-07/08, this requirement's dependency is already satisfied* — interfaces.md #4 already carries `vehicle_speed_health_state`. The remaining open question is upstream of this feature: whether the Vehicle Speed Calculator's actual baseline output includes a compatible health signal at all (fmea.md Finding 8) — this requirement is specified correctly regardless, but its testability depends on that signal genuinely existing.
+
+*Traces to:* interfaces.md #4; block_diagram.md Section 4; pothole_observation_reporter_non_functional_requirements.md POR-NFR-01; fmea.md Finding 8.
+
 ---
 
 
@@ -78,8 +87,9 @@ If World Model Builder's fusion process itself is unhealthy — a fault distinct
 
 ## Open items surfaced while drafting
 
-- POR-REQ-02 depends on a sign convention for `depth_values` (negative = depression) that is not currently stated in interfaces.md — needs to be added there, not just assumed here.
+- POR-REQ-02's sign-convention dependency is resolved — see above.
 - POR-REQ-03 depends on `grid_resolution_cm` (world_model_builder_requirements.md WMB-REQ-01) being fine enough to resolve a 150 mm feature — worth confirming once that value is set, since too coarse a resolution would make this requirement unenforceable.
 - POR-REQ-07 depends on a Live-layer-contribution signal on interfaces.md #3 that does not currently exist.
 - POR-REQ-08 depends on a fusion-health signal on interfaces.md #3 that does not currently exist.
-- POR-REQ-07 and POR-REQ-08 together suggest interface #3's payload needs two new fields, not one — worth adding both in the same pass through interfaces.md and world_model_builder_requirements.md, rather than addressing them separately, since both originate from the same underlying gap: World Model Builder's own output currently carries no provenance or health information about itself, only about the result.
+- POR-REQ-07 and POR-REQ-08 together suggest interface #3's payload needs two new fields, not one — worth adding both in the same pass through interfaces.md and world_model_builder_requirements.md, rather than addressing them separately, since both originate from the same underlying gap: World Model Builder's own output currently carries no provenance or health information about itself, only about the result. Tracked as fmea.md Finding 9.
+- POR-REQ-09's dependency (interfaces.md #4) is satisfied, but whether the Vehicle Speed Calculator's baseline output actually has a compatible health signal is unverified — tracked as fmea.md Finding 8.

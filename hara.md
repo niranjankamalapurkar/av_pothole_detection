@@ -158,6 +158,8 @@ Perception's pothole-candidate generation was never a candidate for separate QM 
 
 Cloud-side logic (Map Update & Healing Engine, aggregation) is external to the vehicle and out of this HARA's scope by definition.
 
+The Pothole Observation Reporter's newer inputs (vehicle speed, for its deduplication-window calculation) and dependent behavior (suppressing all reporting when that input is invalid) do not change this classification. Every failure mode these introduce reduces to one of the two outcomes already established for this component — a missed or delayed report reduces to baseline risk (item #6's reasoning), and an excessive or malformed one is a bandwidth/data-quality concern (item #5's reasoning and fmea.md Findings 8-9) — neither creates a path back into the safety-relevant chain that did not already exist.
+
 ---
 
 ## 7. SOTIF Items (items #4, #6, #8) — not ASIL-classified here
@@ -175,6 +177,7 @@ Cloud-side logic (Map Update & Healing Engine, aggregation) is external to the v
 3. World Model Builder's real-time budget requires an explicit shedding priority under sustained pressure: Prior (cloud) layer first, before any core safety layer is affected — the analogue of Perception's own existing internal prioritization, previously unstated at World Model Builder's level.
 4. Whether Perception should produce a separately-defined pothole-candidate output at all, versus road-surface content already being one semantic class within Perception's unified occupancy/semantic output (documented as the more current pattern, e.g. BEVFusion, already cited in block_diagram.md), is an open architectural question this document flags but does not resolve.
 5. Localization drift affects the Prior layer's placement in World Model Builder's grid, not the Live layer's. The Live layer arrives already ego-relative and needs no localization-dependent conversion to be placed in the grid.
+6. The Pothole Observation Reporter's vehicle-speed input and its suppress-on-invalid-speed behavior were reviewed against this document's classification and found not to change it — see Classification Summary. This was an explicit check, not an assumption: a new input to an already-QM, dead-end component is not automatically safe by association, and needed the same reduces-to-baseline-or-bandwidth reasoning applied to confirm it, the same way it was applied to this component's other suppression conditions (POR-REQ-07, POR-REQ-08).
 
 ---
 
@@ -184,5 +187,5 @@ Cloud-side logic (Map Update & Healing Engine, aggregation) is external to the v
 - **Connectivity Manager authentication/validation requirement (baseline)** -> confirm coverage of this feature's cloud data before it reaches the Prior layer (addresses #1).
 - **Bandwidth allocation requirement** -> derive from existing E/E architecture budget (addresses #5).
 - **World Model Builder real-time budget requirement, inclusive of grid-patch fusion compute and an explicit shedding priority (Prior layer first)** -> derive from existing WCET allocation, extended to state this feature's degradation order explicitly (addresses #7).
-- **Pothole Observation Reporter QM development** -> threshold/debounce logic and report packaging, developed at QM rigor consistent with its dead-end architectural position (supports Classification Summary).
+- **Pothole Observation Reporter QM development** -> threshold/debounce logic, report packaging, and the vehicle-speed-dependent deduplication and suppress-on-invalid-speed logic, all developed at QM rigor consistent with its dead-end architectural position (supports Classification Summary, addresses Finding 6).
 - **Open architectural question — unified vs. separate Perception output for road-surface content** -> resolve whether interface #1 should exist as a dedicated feed at all, or whether this feature should instead rely on Perception's already-unified occupancy output (Finding 6).

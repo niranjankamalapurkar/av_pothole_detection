@@ -102,6 +102,24 @@ Coverage: COVERED — [document, section] if addressed, or NOT COVERED — see F
     System effect: A bandwidth/telemetry-burst concern (hara.md item #5), not a real-time vehicle-safety concern.
     Coverage:      COVERED — hara.md item #5
 
+**4. Failure mode: Vehicle speed input invalid, unavailable, or degraded**
+    Category:      Loss of function (input) / Erroneous output (if unaccounted for)
+    Local effect:  The Reporter cannot reliably compute the position-based deduplication suppression window (pothole_observation_reporter_non_functional_requirements.md POR-NFR-01) without a trustworthy vehicle_speed_mph reading.
+    System effect: block_diagram.md Section 4 and interfaces.md #4 define the required response: suppress all cloud reporting when vehicle_speed_health_state is DEGRADED or FAULTED, rather than computing a suppression window from an untrustworthy speed value — which could otherwise produce either excessive duplicate reports (window too short) or unbounded suppression of genuine new observations (window too long).
+    Coverage:      Requirement stated (block_diagram.md Section 4, interfaces.md #4) — whether the Vehicle Speed Calculator's actual baseline output includes an equivalent health signal is unverified. NOT COVERED, see Finding 8.
+
+**5. Failure mode: Candidate reported despite being derived solely from the Prior layer**
+    Category:      Erroneous output (data-quality; not safety-relevant per hara.md Classification Summary)
+    Local effect:  A report reaches the cloud carrying no genuinely new information — the fused value it is based on originated entirely from the cloud's own existing data (World Model Builder's Live-unavailable fallback, world_model_builder_requirements.md WMB-REQ-08, was active for that observation).
+    System effect: Risks being miscounted by the Healing Engine's aggregation logic as an independent confirming observation (Finding 7) — vehicle_id alone cannot distinguish a genuinely new observation from an echo of existing cloud data.
+    Coverage:      Requirement stated (pothole_observation_reporter_functional_requirements.md POR-REQ-07) — depends on a Live-layer-contribution signal on interfaces.md #3 that does not yet exist. NOT COVERED, see Finding 9.
+
+**6. Failure mode: Candidate reported despite World Model Builder's fusion process itself being unhealthy**
+    Category:      Erroneous output (data-quality; not safety-relevant per hara.md Classification Summary)
+    Local effect:  Stale or corrupted fused output following a fusion-process fault is reported to the cloud as if it were a valid observation.
+    System effect: Pollutes the fleet database with invalid data — distinct from, and worse than, reporting nothing.
+    Coverage:      Requirement stated (pothole_observation_reporter_functional_requirements.md POR-REQ-08) — depends on a fusion-health signal on interfaces.md #3 that does not yet exist. NOT COVERED, see Finding 9.
+
 ---
 
 ## Connectivity Manager / Local Datalogger / Cloud (Map Update & Healing Engine)
@@ -168,3 +186,15 @@ Action: determine whether interface #1 should be removed entirely, with road-sur
 The cloud's definition of "independent" vs. "correlated" reports — for both adding and clearing entries — is undefined. With no onboard physical-confirmation mechanism in this design, this is the sole defense against both correlated false positives and correlated false negatives at fleet scale.
 
 Action: define the aggregation logic explicitly, including a concrete, testable definition of independence (time-of-day diversity, vehicle/sensor diversity, and whether weather/lighting context is needed).
+
+**Finding 8 —** Vehicle Speed Calculator's health-signal compatibility is unverified
+
+interfaces.md #4 defines vehicle_speed_health_state as part of this feature's own consumption of the Vehicle Speed Calculator (a feature-defined interface, distinct from that same component's existing baseline connection to Path Planner, Baseline Dependency A). Baseline Dependency A does not itself specify any such signal, so this feature cannot confirm the Vehicle Speed Calculator's actual native output includes an equivalent health/validity indicator.
+
+Action: confirm with the Vehicle Speed Calculator's own specification whether a compatible health signal exists; if not, this interface needs revisiting — e.g., deriving validity from signal plausibility or rate-of-change checks instead of assuming a native health field, or treating this as newly-required baseline functionality.
+
+**Finding 9 —** interfaces.md #3 lacks provenance and health signals for World Model Builder's own output
+
+Two Pothole Observation Reporter requirements — POR-REQ-07 (suppress Prior-only-derived candidates) and POR-REQ-08 (suppress candidates following a fusion-health fault) — both depend on signals interfaces.md #3 does not currently carry: a Live-layer-contribution indicator and a fusion_health_state-equivalent field, respectively. Both originate from the same underlying gap — World Model Builder's fused output currently describes only the result, not its own provenance or health.
+
+Action: add both fields to interfaces.md #3's payload in the same pass, consistent with how perception_health_state already exists on interface #1 for the analogous purpose.
